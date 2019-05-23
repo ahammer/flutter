@@ -19,6 +19,7 @@ import 'ios/plist_utils.dart' as plist;
 import 'ios/xcodeproj.dart' as xcode;
 import 'plugins.dart';
 import 'template.dart';
+import 'web/web_device.dart';
 
 /// Represents the contents of a Flutter project at the specified [directory].
 ///
@@ -95,6 +96,18 @@ class FlutterProject {
   /// The Android sub project of this project.
   AndroidProject get android => AndroidProject._(this);
 
+  /// The web sub project of this project.
+  WebProject get web => WebProject._(this);
+
+  /// The macos sub project of this project.
+  MacOSProject get macos => MacOSProject._(this);
+
+  /// The linux sub project of this project.
+  LinuxProject get linux => LinuxProject._(this);
+
+  /// The windows sub project of this project.
+  WindowsProject get windows => WindowsProject._(this);
+
   /// The `pubspec.yaml` file of this project.
   File get pubspecFile => directory.childFile('pubspec.yaml');
 
@@ -106,6 +119,14 @@ class FlutterProject {
 
   /// The `.dart-tool` directory of this project.
   Directory get dartTool => directory.childDirectory('.dart_tool');
+
+  /// The directory containing the generated code for this project.
+  Directory get generated => directory
+    .absolute
+    .childDirectory('.dart_tool')
+    .childDirectory('build')
+    .childDirectory('generated')
+    .childDirectory(manifest.appName);
 
   /// The example sub-project of this project.
   FlutterProject get example => FlutterProject(
@@ -143,19 +164,25 @@ class FlutterProject {
     refreshPluginsList(this);
     await android.ensureReadyForPlatformSpecificTooling();
     await ios.ensureReadyForPlatformSpecificTooling();
+    if (flutterWebEnabled) {
+      await web.ensureReadyForPlatformSpecificTooling();
+    }
     await injectPlugins(this);
   }
 
   /// Return the set of builders used by this package.
-  Future<List<String>> get builders async {
-    final YamlMap pubspec = loadYaml(await pubspecFile.readAsString());
-    final YamlList builders = pubspec['builders'];
-    if (builders == null) {
-      return <String>[];
+  YamlMap get builders {
+    if (!pubspecFile.existsSync()) {
+      return null;
     }
-    return builders.map<String>((Object node) {
-      return node.toString();
-    }).toList();
+    final YamlMap pubspec = loadYaml(pubspecFile.readAsStringSync());
+    return pubspec['builders'];
+  }
+
+  /// Whether there are any builders used by this package.
+  bool get hasBuilders {
+    final YamlMap result = builders;
+    return result != null && result.isNotEmpty;
   }
 }
 
@@ -324,7 +351,7 @@ class IosProject {
       target,
       <String, dynamic>{
         'projectName': parent.manifest.appName,
-        'iosIdentifier': parent.manifest.iosBundleIdentifier
+        'iosIdentifier': parent.manifest.iosBundleIdentifier,
       },
       printStatusWhenWriting: false,
       overwriteExisting: true,
@@ -453,6 +480,31 @@ class AndroidProject {
   }
 }
 
+/// Represents the web sub-project of a Flutter project.
+class WebProject {
+  WebProject._(this.parent);
+
+  final FlutterProject parent;
+
+  Future<void> ensureReadyForPlatformSpecificTooling() async {
+    /// Generate index.html in build/web. Eventually we could support
+    /// a custom html under the web sub directory.
+    final Directory outputDir = fs.directory(getWebBuildDirectory());
+    if (!outputDir.existsSync()) {
+      outputDir.createSync(recursive: true);
+    }
+    final Template template = Template.fromName('web/index.html.tmpl');
+    template.render(
+      outputDir,
+      <String, dynamic>{
+        'appName': parent.manifest.appName,
+      },
+      printStatusWhenWriting: false,
+      overwriteExisting: true,
+    );
+  }
+}
+
 /// Deletes [directory] with all content.
 void _deleteIfExistsSync(Directory directory) {
   if (directory.existsSync())
@@ -474,4 +526,49 @@ Match _firstMatchInFile(File file, RegExp regExp) {
     }
   }
   return null;
+}
+
+/// The macOS sub project.
+class MacOSProject {
+  MacOSProject._(this.project);
+
+  final FlutterProject project;
+
+  bool existsSync() => project.directory.childDirectory('macos').existsSync();
+
+  // Note: The build script file exists as a temporary shim.
+  File get buildScript => project.directory.childDirectory('macos').childFile('build.sh');
+
+  // Note: The name script file exists as a temporary shim.
+  File get nameScript => project.directory.childDirectory('macos').childFile('name_output.sh');
+}
+
+/// The Windows sub project
+class WindowsProject {
+  WindowsProject._(this.project);
+
+  final FlutterProject project;
+
+  bool existsSync() => project.directory.childDirectory('windows').existsSync();
+
+  // Note: The build script file exists as a temporary shim.
+  File get buildScript => project.directory.childDirectory('windows').childFile('build.bat');
+
+  // Note: The name script file exists as a temporary shim.
+  File get nameScript => project.directory.childDirectory('windows').childFile('name_output.bat');
+}
+
+/// The Linux sub project.
+class LinuxProject {
+  LinuxProject._(this.project);
+
+  final FlutterProject project;
+
+  bool existsSync() => project.directory.childDirectory('linux').existsSync();
+
+  // Note: The build script file exists as a temporary shim.
+  File get buildScript => project.directory.childDirectory('linux').childFile('build.sh');
+
+  // Note: The name script file exists as a temporary shim.
+  File get nameScript => project.directory.childDirectory('linux').childFile('name_output.sh');
 }
